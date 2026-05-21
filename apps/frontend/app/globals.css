@@ -1,0 +1,203 @@
+:root {
+  color-scheme: dark;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #0d1117;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 24px 56px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #7ee787;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 40px;
+  line-height: 1.05;
+}
+
+.lede {
+  max-width: 620px;
+  margin: 16px 0 0;
+  color: #9fb0c3;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.heroPanel,
+.panel {
+  border: 1px solid #263040;
+  border-radius: 8px;
+  background: #11161d;
+}
+
+.heroPanel {
+  padding: 8px 0;
+}
+
+.statRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-top: 1px solid #1f2835;
+}
+
+.statRow:first-child {
+  border-top: 0;
+}
+
+.statLabel,
+.statDetail {
+  margin: 0;
+  color: #8b9bb0;
+  font-size: 13px;
+}
+
+.statValue {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.85fr);
+  gap: 24px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.panelHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #1a2330;
+  color: #7ee787;
+  font-size: 12px;
+}
+
+.badge.muted {
+  color: #9fb0c3;
+}
+
+.table {
+  display: grid;
+}
+
+.tableHead,
+.tableRow {
+  display: grid;
+  grid-template-columns: 1.3fr 0.9fr 0.8fr 0.9fr;
+  gap: 12px;
+  padding: 14px 0;
+}
+
+.tableHead {
+  color: #8b9bb0;
+  font-size: 12px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #263040;
+}
+
+.tableRow {
+  border-bottom: 1px solid #1b2430;
+  font-size: 14px;
+}
+
+.tableRow:last-child {
+  border-bottom: 0;
+}
+
+.repoList {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repoList li {
+  display: grid;
+  gap: 6px;
+}
+
+.repoList span {
+  color: #9fb0c3;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .contentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    font-size: 32px;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 24px 16px 40px;
+  }
+
+  .tableHead,
+  .tableRow {
+    grid-template-columns: 1fr 1fr;
+  }
+}

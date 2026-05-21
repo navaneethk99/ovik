@@ -1,0 +1,7 @@
+.env.local
+.next
+node_modules
+coverage
+dist
+apps/frontend/.next
+apps/frontend/node_modules
