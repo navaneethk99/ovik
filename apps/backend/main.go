@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,12 @@ type server struct {
 	db *pgxpool.Pool
 }
 
+type attendanceRecord struct {
+	Name         string    `json:"name"`
+	Status       string    `json:"status"`
+	RecognizedAt time.Time `json:"recognized_at"`
+}
+
 func main() {
 	loadEnv(".env", "../../.env")
 
@@ -34,7 +42,15 @@ func main() {
 	}
 
 	ctx := context.Background()
-	db, err := pgxpool.New(ctx, databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		log.Fatalf("parse database config: %v", err)
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	config.ConnConfig.DialFunc = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		return dialer.DialContext(ctx, "tcp4", addr)
+	}
+	db, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		log.Fatalf("connect database: %v", err)
 	}
@@ -90,7 +106,12 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleAttendance(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAttendanceList(w, r)
+		return
+	case http.MethodPost:
+	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -127,6 +148,30 @@ func (s *server) handleAttendance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *server) handleAttendanceList(w http.ResponseWriter, r *http.Request) {
+	limit := 25
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 200 {
+			writeJSONError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+			return
+		}
+		limit = parsed
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), writeTimeout)
+	defer cancel()
+
+	records, err := listAttendance(ctx, s.db, limit)
+	if err != nil {
+		log.Printf("attendance read failed: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "database read failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, records)
+}
+
 func insertAttendance(ctx context.Context, db *pgxpool.Pool, event attendance.Event, recognizedAt time.Time) error {
 	const query = `
 INSERT INTO attendance_records (name, attendance_date, status, recognized_at, updated_at)
@@ -135,6 +180,31 @@ VALUES ($1, $2, $3, $4, NOW());`
 	attendanceDate := recognizedAt.In(time.Local).Format("2006-01-02")
 	_, err := db.Exec(ctx, query, event.Name, attendanceDate, event.Status, recognizedAt.UTC())
 	return err
+}
+
+func listAttendance(ctx context.Context, db *pgxpool.Pool, limit int) ([]attendanceRecord, error) {
+	const query = `
+SELECT name, status, recognized_at
+FROM attendance_records
+ORDER BY recognized_at DESC
+LIMIT $1;`
+
+	rows, err := db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]attendanceRecord, 0, limit)
+	for rows.Next() {
+		var record attendanceRecord
+		if err := rows.Scan(&record.Name, &record.Status, &record.RecognizedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+
+	return records, rows.Err()
 }
 
 func validateEvent(event attendance.Event) error {

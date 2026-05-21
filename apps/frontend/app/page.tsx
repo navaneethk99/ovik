@@ -1,85 +1,92 @@
-const stats = [
-  { label: "Backend", value: "Go API", detail: "Attendance write service" },
-  { label: "Recognizer", value: "Go CV", detail: "Face detection client" },
-  { label: "Frontend", value: "Next.js", detail: "Operator dashboard" }
-];
+type AttendanceRecord = {
+  name: string;
+  status: string;
+  recognized_at: string;
+};
 
-const recentEvents = [
-  { name: "Navaneeth", status: "Present", time: "09:02", source: "Cam 01" },
-  { name: "Asha", status: "Present", time: "09:11", source: "Cam 02" },
-  { name: "Rahul", status: "Present", time: "09:18", source: "Cam 01" }
-];
+const defaultBackendURL = "http://localhost:8080";
 
-export default function Home() {
+function backendURL() {
   return (
-    <main className="shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Ovik Monorepo</p>
-          <h1>Attendance operations</h1>
-          <p className="lede">
-            Backend ingestion, face recognition, and a Next.js surface for
-            reviewing the stream.
+    process.env.BACKEND_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    defaultBackendURL
+  );
+}
+
+async function getAttendanceRecords() {
+  const response = await fetch(`${backendURL()}/attendance?limit=50`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`attendance fetch failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as AttendanceRecord[];
+}
+
+function formatTimestamp(value: string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(value));
+}
+
+export default async function Home() {
+  const records = await getAttendanceRecords();
+
+  return (
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(42,157,143,0.18),transparent_32%),linear-gradient(180deg,#081412_0%,#0d1f1b_48%,#07100f_100%)] px-5 py-10 text-emerald-50 sm:px-8 sm:py-14">
+      <div className="mx-auto max-w-4xl">
+        <section className="mb-6">
+          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-teal-300">
+            Ovik Attendance
           </p>
-        </div>
-        <div className="heroPanel">
-          {stats.map((item) => (
-            <div key={item.label} className="statRow">
-              <div>
-                <p className="statLabel">{item.label}</p>
-                <p className="statValue">{item.value}</p>
-              </div>
-              <p className="statDetail">{item.detail}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+          <h1 className="text-4xl leading-none font-semibold sm:text-5xl">
+            Present log
+          </h1>
+          <p className="mt-4 max-w-2xl text-base leading-7 text-emerald-100/75">
+          Recent recognition events written by the recognizer and stored by the
+          backend.
+          </p>
+        </section>
 
-      <section className="contentGrid">
-        <div className="panel">
-          <div className="panelHeader">
-            <h2>Recent attendance</h2>
-            <span className="badge">Live stream</span>
+        <section className="rounded-3xl border border-teal-200/15 bg-black/20 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:p-6">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-medium">Recent marks</h2>
+            <span className="rounded-full bg-teal-300/12 px-3 py-1 text-xs text-teal-200">
+              {records.length} entries
+            </span>
           </div>
-          <div className="table">
-            <div className="tableHead">
-              <span>Name</span>
-              <span>Status</span>
-              <span>Time</span>
-              <span>Source</span>
-            </div>
-            {recentEvents.map((event) => (
-              <div key={`${event.name}-${event.time}`} className="tableRow">
-                <span>{event.name}</span>
-                <span>{event.status}</span>
-                <span>{event.time}</span>
-                <span>{event.source}</span>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        <div className="panel stack">
-          <div className="panelHeader">
-            <h2>System layout</h2>
-            <span className="badge muted">Monorepo</span>
-          </div>
-          <ul className="repoList">
-            <li>
-              <strong>apps/backend</strong>
-              <span>Go API that writes recognition events to PostgreSQL.</span>
-            </li>
-            <li>
-              <strong>apps/recognizer</strong>
-              <span>Go client that classifies faces and posts attendance.</span>
-            </li>
-            <li>
-              <strong>apps/frontend</strong>
-              <span>Next.js app for operators and reporting flows.</span>
-            </li>
-          </ul>
-        </div>
-      </section>
+          {records.length === 0 ? (
+            <p className="text-sm text-emerald-100/75">
+              No attendance has been marked yet.
+            </p>
+          ) : (
+            <div className="grid gap-3">
+              {records.map((record) => (
+                <article
+                  key={`${record.name}-${record.recognized_at}`}
+                  className="flex flex-col gap-3 border-t border-teal-200/10 py-4 first:border-t-0 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-lg font-semibold">{record.name}</p>
+                    <p className="mt-1 text-sm text-emerald-100/75">
+                      {formatTimestamp(record.recognized_at)}
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full bg-lime-300/12 px-3 py-1 text-xs capitalize text-lime-200">
+                    {record.status}
+                  </span>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   );
 }

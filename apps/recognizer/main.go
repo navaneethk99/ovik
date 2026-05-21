@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/Kagami/go-face"
@@ -25,15 +24,13 @@ const (
 	localKnownDir       = "known_faces"
 	repoKnownDir        = "apps/recognizer/known_faces"
 	tolerance           = 0.45
-	defaultMarkCooldown = 5 * time.Minute
 )
 
 type attendanceClient struct {
 	url        string
 	authToken  string
 	httpClient *http.Client
-	cooldown   time.Duration
-	lastMarked map[string]time.Time
+	visibleNow map[string]bool
 }
 
 func main() {
@@ -120,6 +117,7 @@ func main() {
 		}
 
 		gocv.IMWrite(framePath, img)
+		seenNames := make(map[string]bool)
 
 		faces, err := rec.RecognizeFile(framePath)
 		if err == nil {
@@ -129,8 +127,11 @@ func main() {
 				classID := rec.ClassifyThreshold(f.Descriptor, tolerance)
 				if classID >= 0 {
 					name = names[int32(classID)]
-					if err := attendance.markPresent(name); err != nil {
+					seenNames[name] = true
+					if !attendance.isVisible(name) {
+						if err := attendance.markPresent(name); err != nil {
 						log.Printf("attendance update failed for %s: %v", name, err)
+					}
 					}
 				}
 
@@ -139,6 +140,7 @@ func main() {
 				gocv.PutText(&img, name, rect.Min, gocv.FontHersheySimplex, 0.8, color.RGBA{0, 255, 0, 0}, 2)
 			}
 		}
+		attendance.updateVisible(seenNames)
 
 		window.IMShow(img)
 
@@ -155,8 +157,7 @@ func newAttendanceClient() *attendanceClient {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		cooldown:   markCooldown(),
-		lastMarked: make(map[string]time.Time),
+		visibleNow: make(map[string]bool),
 	}
 }
 
@@ -165,15 +166,10 @@ func (c *attendanceClient) markPresent(name string) error {
 		return nil
 	}
 
-	now := time.Now()
-	if lastMarkedAt, ok := c.lastMarked[name]; ok && now.Sub(lastMarkedAt) < c.cooldown {
-		return nil
-	}
-
 	payload := attendance.Event{
 		Name:         name,
 		Status:       "present",
-		RecognizedAt: now.UTC().Format(time.RFC3339),
+		RecognizedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	body, err := payload.Marshal()
@@ -201,24 +197,17 @@ func (c *attendanceClient) markPresent(name string) error {
 		return fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
-	c.lastMarked[name] = now
 	log.Printf("marked %s as present", name)
 
 	return nil
 }
 
-func markCooldown() time.Duration {
-	raw := os.Getenv("ATTENDANCE_MARK_COOLDOWN_SECONDS")
-	if raw == "" {
-		return defaultMarkCooldown
-	}
+func (c *attendanceClient) isVisible(name string) bool {
+	return c.visibleNow[name]
+}
 
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds <= 0 {
-		return defaultMarkCooldown
-	}
-
-	return time.Duration(seconds) * time.Second
+func (c *attendanceClient) updateVisible(seenNames map[string]bool) {
+	c.visibleNow = seenNames
 }
 
 func resolvePath(preferred, fallback string) string {

@@ -23,6 +23,8 @@ services:
       - "3000:3000"
 
   recognizer:
+    profiles:
+      - recognizer
     build:
       context: .
       dockerfile: apps/recognizer/Dockerfile

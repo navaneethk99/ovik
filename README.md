@@ -93,6 +93,15 @@ That starts:
 
 - `backend` on `http://localhost:8080`
 - `frontend` on `http://localhost:3000`
+
+To include the recognizer container on a Linux host:
+
+```bash
+docker compose --profile recognizer up --build
+```
+
+That additionally starts:
+
 - `recognizer` as a Linux container posting to `backend`
 
 The recognizer service expects webcam device access at `/dev/video0` and X11 display forwarding via `/tmp/.X11-unix`. That is suitable for a Linux host. On macOS, camera access from Docker is not reliable, so run the recognizer on the host if needed and keep backend/frontend in Compose.
