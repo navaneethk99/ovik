@@ -5,6 +5,12 @@
   "scripts": {
     "dev:frontend": "pnpm --filter frontend dev",
     "build:frontend": "pnpm --filter frontend build",
-    "lint:frontend": "pnpm --filter frontend lint"
+    "lint:frontend": "pnpm --filter frontend lint",
+    "dev:desktop": "concurrently \"pnpm dev:frontend\" \"wait-on http://localhost:3000 && pnpm --filter desktop dev\"",
+    "build:desktop": "NEXT_OUTPUT=export pnpm --filter frontend build && pnpm --filter desktop build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0"
   }
 }
