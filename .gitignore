@@ -4,4 +4,20 @@ node_modules
 coverage
 dist
 apps/frontend/.next
-apps/frontend/node_modules
+
+# Ignore known faces databases but preserve directory
+apps/recognizer/known_faces/*
+!apps/recognizer/known_faces/.gitkeep
+
+# Ignore TTS cache files but preserve directory
+apps/recognizer/tts_cache/*
+!apps/recognizer/tts_cache/.gitkeep
+
+# Ignore local python virtual environments
+apps/recognizer/.venv
+apps/recognizer/venv
+
+# Ignore local build pkgconfig helper
+apps/recognizer/pkgconfig
+
+

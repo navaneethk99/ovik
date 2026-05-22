@@ -7,8 +7,11 @@ services:
       - .env
     environment:
       BACKEND_ADDR: :8080
+      KNOWN_FACES_DIR: /app/known_faces
     ports:
       - "8080:8080"
+    volumes:
+      - known_faces:/app/known_faces
 
   frontend:
     build:
@@ -36,6 +39,10 @@ services:
       - /dev/video0:/dev/video0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      - known_faces:/app/known_faces
     environment:
       ATTENDANCE_POST_URL: http://backend:8080/attendance
       DISPLAY: ${DISPLAY:-:0}
+
+volumes:
+  known_faces:
