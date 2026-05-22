@@ -7,7 +7,9 @@
     "build:frontend": "pnpm --filter frontend build",
     "lint:frontend": "pnpm --filter frontend lint",
     "dev:desktop": "concurrently \"pnpm dev:frontend\" \"wait-on http://localhost:3000 && pnpm --filter desktop dev\"",
-    "build:desktop": "NEXT_OUTPUT=export pnpm --filter frontend build && pnpm --filter desktop build"
+    "build:desktop": "NEXT_OUTPUT=export pnpm --filter frontend build && pnpm --filter desktop build",
+    "dev:mobile": "pnpm --filter mobile dev",
+    "build:mobile": "pnpm --filter mobile build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

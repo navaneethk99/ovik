@@ -1,6 +1,7 @@
 packages:
   - apps/frontend
   - apps/desktop
+  - apps/mobile
 allowBuilds:
   sharp: true
   electron: true

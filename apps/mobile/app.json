@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Ovik Mobile",
+    "slug": "ovik-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Ovik Mobile to access your camera to capture and register new employee faces."
+      }
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Ovik Mobile to access your camera to capture and register new employee faces."
+        }
+      ],
+      "expo-router"
+    ],
+    "scheme": "ovik-mobile"
+  }
+}
