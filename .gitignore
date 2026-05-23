@@ -7,6 +7,8 @@ apps/frontend/.next
 
 # Ignore known faces databases but preserve directory
 apps/recognizer/known_faces/*
+apps/recognizer/tts_cache/*
+apps/recognizer/attendees/*
 !apps/recognizer/known_faces/.gitkeep
 
 # Ignore TTS cache files but preserve directory
@@ -20,4 +22,6 @@ apps/recognizer/venv
 # Ignore local build pkgconfig helper
 apps/recognizer/pkgconfig
 
-
+# Ignore local Expo configuration and build state
+.expo/
+**/.expo/

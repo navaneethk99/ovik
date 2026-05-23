@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/color"
 	"log"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +32,8 @@ const (
 	repoKnownDir  = "apps/recognizer/known_faces"
 )
 
-var tolerance float32 = 0.35
+var tolerance float32 = 0.25
+var minConfidenceGap float32 = 0.02
 
 type attendanceClient struct {
 	url        string
@@ -47,6 +51,14 @@ func main() {
 			log.Printf("Using tolerance configured from env: %f", tolerance)
 		} else {
 			log.Printf("invalid RECOGNIZER_TOLERANCE '%s', using default %f", tolStr, tolerance)
+		}
+	}
+	if gapStr := os.Getenv("RECOGNIZER_MIN_CONFIDENCE_GAP"); gapStr != "" {
+		if val, err := strconv.ParseFloat(gapStr, 32); err == nil {
+			minConfidenceGap = float32(val)
+			log.Printf("Using min confidence gap configured from env: %f", minConfidenceGap)
+		} else {
+			log.Printf("invalid RECOGNIZER_MIN_CONFIDENCE_GAP '%s', using default %f", gapStr, minConfidenceGap)
 		}
 	}
 
@@ -169,33 +181,30 @@ func main() {
 			}
 			for i, f := range faces {
 				name := "Unknown"
-
-				// Calculate exact distances to all known samples for diagnostic logging
-				var distLogs []string
-				for idx, sample := range samples {
-					dist := face.SquaredEuclideanDistance(f.Descriptor, sample)
-					sampleLabel := labels[idx]
-					sampleName := names[sampleLabel]
-					distLogs = append(distLogs, fmt.Sprintf("%s=%.4f", sampleName, dist))
-				}
-				distStr := strings.Join(distLogs, ", ")
-
-				classID := rec.ClassifyThreshold(f.Descriptor, tolerance)
-				if classID >= 0 {
-					name = names[int32(classID)]
+				bestName, bestDist, secondBestDist, matched, distStr := classifyDescriptor(f.Descriptor, samples, labels, names, tolerance, minConfidenceGap)
+				if matched {
+					name = bestName
 					seenNames[name] = true
 				}
-				log.Printf("  Face %d at %v: classID=%d, name=%s, tolerance=%.4f, isVisible=%t, distances: {%s}",
-					i, f.Rectangle, classID, name, tolerance, attendance.isVisible(name), distStr)
+				log.Printf("  Face %d at %v: name=%s, matched=%t, bestDist=%.4f, secondBestDist=%.4f, tolerance=%.4f, minGap=%.4f, isVisible=%t, distances: {%s}",
+					i, f.Rectangle, name, matched, bestDist, secondBestDist, tolerance, minConfidenceGap, attendance.isVisible(name), distStr)
 
-				if classID >= 0 {
+				if matched {
 					if !attendance.isVisible(name) {
-						if recorded, err := attendance.markPresent(name); err != nil {
+						recordID, recorded, err := attendance.markPresent(name)
+						if err != nil {
 							log.Printf("attendance update failed for %s: %v", name, err)
 						} else if recorded {
 							// Update visibility immediately to prevent multiple markPresent calls in the same frame
 							attendance.visibleNow[name] = true
 							go playWelcomeVoice(name)
+							// Capture the recognized face from this exact frame and link it to the saved attendance row.
+							frameData, err := captureSnapshot(img, f.Rectangle)
+							if err != nil {
+								log.Printf("snapshot capture failed for %s (id=%d): %v", name, recordID, err)
+							} else if err := attendance.uploadSnapshot(recordID, name, frameData); err != nil {
+								log.Printf("snapshot upload failed for %s (id=%d): %v", name, recordID, err)
+							}
 						} else {
 							// If not recorded (cooldown), we should still mark visibleNow to prevent spamming
 							attendance.visibleNow[name] = true
@@ -218,6 +227,56 @@ func main() {
 	}
 }
 
+func classifyDescriptor(
+	descriptor face.Descriptor,
+	samples []face.Descriptor,
+	labels []int32,
+	names map[int32]string,
+	tolerance float32,
+	minGap float32,
+) (bestName string, bestDist float32, secondBestDist float32, matched bool, distLog string) {
+	bestByName := make(map[string]float32)
+
+	for idx, sample := range samples {
+		dist := face.SquaredEuclideanDistance(descriptor, sample)
+		sampleName := names[labels[idx]]
+		prev, exists := bestByName[sampleName]
+		if !exists || dist < prev {
+			bestByName[sampleName] = dist
+		}
+	}
+
+	bestDist = float32(1e9)
+	secondBestDist = float32(1e9)
+	var distLogs []string
+
+	for sampleName, dist := range bestByName {
+		distLogs = append(distLogs, fmt.Sprintf("%s=%.4f", sampleName, dist))
+		if dist < bestDist {
+			secondBestDist = bestDist
+			bestDist = dist
+			bestName = sampleName
+		} else if dist < secondBestDist {
+			secondBestDist = dist
+		}
+	}
+
+	sort.Strings(distLogs)
+	distLog = strings.Join(distLogs, ", ")
+
+	if bestName == "" {
+		return "", bestDist, secondBestDist, false, distLog
+	}
+	if bestDist > tolerance {
+		return bestName, bestDist, secondBestDist, false, distLog
+	}
+	if secondBestDist < float32(1e9) && secondBestDist-bestDist < minGap {
+		return bestName, bestDist, secondBestDist, false, distLog
+	}
+
+	return bestName, bestDist, secondBestDist, true, distLog
+}
+
 func newAttendanceClient() *attendanceClient {
 	return &attendanceClient{
 		url:       os.Getenv("ATTENDANCE_POST_URL"),
@@ -229,9 +288,9 @@ func newAttendanceClient() *attendanceClient {
 	}
 }
 
-func (c *attendanceClient) markPresent(name string) (bool, error) {
+func (c *attendanceClient) markPresent(name string) (recordID int64, recorded bool, err error) {
 	if c.url == "" {
-		return true, nil
+		return 0, true, nil
 	}
 
 	payload := attendance.Event{
@@ -242,12 +301,12 @@ func (c *attendanceClient) markPresent(name string) (bool, error) {
 
 	body, err := payload.Marshal()
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -257,28 +316,74 @@ func (c *attendanceClient) markPresent(name string) (bool, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return false, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+		return 0, false, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
 	var res struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
+		ID     int64  `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
 		if res.Status == "cooldown" {
 			log.Printf("attendance check: %s is in cooldown, skipping", name)
-			return false, nil
+			return 0, false, nil
 		}
+		recordID = res.ID
 	}
 
-	log.Printf("marked %s as present", name)
+	log.Printf("marked %s as present (attendance id=%d)", name, recordID)
+	return recordID, true, nil
+}
 
-	return true, nil
+// uploadSnapshot sends the captured recognition image to the backend to be stored with the attendance row.
+func (c *attendanceClient) uploadSnapshot(attendanceID int64, name string, frameData []byte) error {
+	if c.url == "" || attendanceID == 0 {
+		return nil
+	}
+
+	snapshotBase64 := base64.StdEncoding.EncodeToString(frameData)
+
+	// Derive snapshot URL from attendance URL (replace /attendance suffix)
+	snapshotURL := strings.TrimSuffix(c.url, "/attendance") + "/attendance/snapshot"
+	if !strings.Contains(c.url, "/attendance") {
+		snapshotURL = c.url + "/attendance/snapshot"
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"attendance_id": attendanceID,
+		"name":          name,
+		"snapshot":      snapshotBase64,
+	})
+	if err != nil {
+		return fmt.Errorf("snapshot marshal failed: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, snapshotURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("snapshot request create failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("snapshot upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("snapshot upload returned status %d", resp.StatusCode)
+	}
+	log.Printf("attendance snapshot uploaded for %s (id=%d)", name, attendanceID)
+	return nil
 }
 
 func (c *attendanceClient) isVisible(name string) bool {
@@ -287,6 +392,69 @@ func (c *attendanceClient) isVisible(name string) bool {
 
 func (c *attendanceClient) updateVisible(seenNames map[string]bool) {
 	c.visibleNow = seenNames
+}
+
+func captureSnapshot(img gocv.Mat, faceRect image.Rectangle) ([]byte, error) {
+	if img.Empty() {
+		return nil, fmt.Errorf("empty frame")
+	}
+
+	bounds := expandRect(faceRect, img.Cols(), img.Rows(), 24)
+	region := img.Region(bounds)
+	defer region.Close()
+
+	snapshot := region.Clone()
+	defer snapshot.Close()
+
+	tmpFile, err := os.CreateTemp("", "ovik-attendance-*.jpg")
+	if err != nil {
+		return nil, fmt.Errorf("create temp snapshot: %w", err)
+	}
+
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("close temp snapshot: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	if ok := gocv.IMWrite(tmpPath, snapshot); !ok {
+		return nil, fmt.Errorf("write temp snapshot image")
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return nil, fmt.Errorf("read temp snapshot: %w", err)
+	}
+
+	return data, nil
+}
+
+func expandRect(rect image.Rectangle, maxWidth, maxHeight, padding int) image.Rectangle {
+	minX := max(0, rect.Min.X-padding)
+	minY := max(0, rect.Min.Y-padding)
+	maxX := min(maxWidth, rect.Max.X+padding)
+	maxY := min(maxHeight, rect.Max.Y+padding)
+
+	if minX >= maxX || minY >= maxY {
+		return image.Rect(0, 0, maxWidth, maxHeight)
+	}
+
+	return image.Rect(minX, minY, maxX, maxY)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func resolvePath(preferred, fallback string) string {
@@ -334,6 +502,7 @@ func playWelcomeVoice(name string) {
 	root := findProjectRoot()
 	gttsCli := filepath.Join(root, "apps/recognizer/.venv/bin/gtts-cli")
 	cacheDir := filepath.Join(root, "apps/recognizer/tts_cache")
+	welcomeText := fmt.Sprintf("Welcome %s", name)
 
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		log.Printf("failed to create tts_cache directory: %v", err)
@@ -344,23 +513,36 @@ func playWelcomeVoice(name string) {
 	audioPath := filepath.Join(cacheDir, fmt.Sprintf("welcome_%s.mp3", safeName))
 
 	if _, err := os.Stat(audioPath); os.IsNotExist(err) {
-		welcomeText := fmt.Sprintf("Welcome %s", name)
-		log.Printf("Generating TTS voice: %q -> %s", welcomeText, audioPath)
-		cmd := exec.Command(gttsCli, welcomeText, "-o", audioPath)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			log.Printf("gtts-cli failed: %v (stderr: %s)", err, stderr.String())
-			return
+		if _, err := os.Stat(gttsCli); err == nil {
+			log.Printf("Generating TTS voice: %q -> %s", welcomeText, audioPath)
+			cmd := exec.Command(gttsCli, welcomeText, "-o", audioPath)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				log.Printf("gtts-cli failed: %v (stderr: %s)", err, stderr.String())
+			}
+		} else {
+			log.Printf("gtts-cli not found at %s, falling back to macOS say", gttsCli)
 		}
 	}
 
-	log.Printf("Playing TTS voice for %s", name)
-	cmd := exec.Command("afplay", audioPath)
+	if _, err := os.Stat(audioPath); err == nil {
+		log.Printf("Playing TTS voice for %s", name)
+		cmd := exec.Command("afplay", audioPath)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			log.Printf("afplay failed: %v (stderr: %s)", err, stderr.String())
+		}
+		return
+	}
+
+	log.Printf("Speaking fallback greeting for %s via macOS say", name)
+	cmd := exec.Command("say", welcomeText)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		log.Printf("afplay failed: %v (stderr: %s)", err, stderr.String())
+		log.Printf("say failed: %v (stderr: %s)", err, stderr.String())
 	}
 }
 

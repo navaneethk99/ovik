@@ -8,6 +8,7 @@ type AttendanceRecord = {
   name: string;
   status: string;
   recognized_at: string;
+  snapshot_path: string | null;
 };
 
 const defaultBackendURL = "http://localhost:8080";
@@ -20,10 +21,20 @@ function backendURL() {
   );
 }
 
+function attendeeSnapshotURL(snapshotPath: string) {
+  const normalizedPath = snapshotPath
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+  return `${backendURL()}/attendees/${normalizedPath}`;
+}
+
 export default function Home() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   const [imgError, setImgError] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [frontendEnabled, setFrontendEnabled] = useState<boolean>(true);
@@ -407,7 +418,7 @@ export default function Home() {
                         <button
                           onClick={() => {
                             setImgError(false);
-                            setSelectedUser(record.name);
+                            setSelectedRecord(record);
                           }}
                           className="font-bold text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 hover:underline text-left"
                         >
@@ -448,19 +459,24 @@ export default function Home() {
         )}
       </section>
 
-      {/* User Image Modal Overlay */}
-      {selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedUser(null)}>
+      {/* Attendance Snapshot Modal */}
+      {selectedRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedRecord(null)}>
           <div
             className="w-full max-w-sm rounded-3xl border border-slate-200 dark:border-teal-200/20 bg-white dark:bg-[#0c1b18] p-6 shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-teal-200/10 pb-3 mb-4">
-              <h3 className="font-bold text-slate-800 dark:text-emerald-50 text-sm">
-                User: {selectedUser}
-              </h3>
+              <div>
+                <h3 className="font-bold text-slate-800 dark:text-emerald-50 text-sm">
+                  {selectedRecord.name}
+                </h3>
+                <p className="text-[10px] text-slate-400 dark:text-emerald-100/40 mt-0.5">
+                  Record #{selectedRecord.id} · {new Date(selectedRecord.recognized_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                </p>
+              </div>
               <button
-                onClick={() => setSelectedUser(null)}
+                onClick={() => setSelectedRecord(null)}
                 className="text-xs text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300 transition-colors"
               >
                 Close
@@ -468,35 +484,52 @@ export default function Home() {
             </div>
 
             <div className="relative aspect-square w-full overflow-hidden rounded-2xl border border-slate-200 dark:border-teal-200/10 bg-slate-50 dark:bg-black/40 flex items-center justify-center">
-              {!imgError ? (
+              {/* Badge overlay */}
+              <div className="absolute top-2 left-2 z-10">
+                {selectedRecord.snapshot_path && !imgError ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/90 px-2 py-0.5 text-[9px] font-bold text-white shadow">
+                    📸 Live Snapshot
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-700/80 px-2 py-0.5 text-[9px] font-bold text-white/80 shadow">
+                    👤 Profile Photo
+                  </span>
+                )}
+              </div>
+
+              {selectedRecord.snapshot_path && !imgError ? (
+                /* Show the live check-in snapshot */
                 <img
-                  src={`${backendURL()}/recogniser/known_faces/${encodeURIComponent(selectedUser)}`}
-                  alt={`${selectedUser} registered face`}
+                  src={attendeeSnapshotURL(selectedRecord.snapshot_path)}
+                  alt={`${selectedRecord.name} check-in snapshot`}
                   className="h-full w-full object-cover"
                   onError={() => setImgError(true)}
                 />
               ) : (
-                <div className="text-center p-6 space-y-2">
-                  <div className="mx-auto h-12 w-12 rounded-full border-2 border-red-500/20 bg-red-500/10 flex items-center justify-center">
-                    <span className="text-red-500 text-lg">!</span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-emerald-100/60 font-semibold">
-                    No photo registered or server offline.
-                  </p>
-                  <p className="text-[10px] text-slate-400 dark:text-emerald-100/35">
-                    Images are fetched from {backendURL()}/recogniser/known_faces/{selectedUser}
-                  </p>
-                </div>
+                /* Fallback: registered profile photo from known_faces */
+                <img
+                  src={`${backendURL()}/recogniser/known_faces/${encodeURIComponent(selectedRecord.name)}`}
+                  alt={`${selectedRecord.name} profile`}
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    // If profile photo also missing, show placeholder
+                    (e.target as HTMLImageElement).style.display = "none";
+                    (e.target as HTMLImageElement).parentElement!.innerHTML +=
+                      `<div class="text-center p-6"><div class="mx-auto h-12 w-12 rounded-full bg-slate-200 dark:bg-white/10 flex items-center justify-center mb-2"><svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='currentColor' class='w-6 h-6 text-slate-400'><path stroke-linecap='round' stroke-linejoin='round' d='M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'/></svg></div><p class='text-xs text-slate-500 dark:text-emerald-100/50'>No photo available</p></div>`;
+                  }}
+                />
               )}
             </div>
 
-            <div className="mt-4 text-center">
+            <div className="mt-3 text-center">
               <p className="text-[10px] text-slate-400 dark:text-emerald-100/40">
-                Registered Face Profile (capture.jpg)
+                {selectedRecord.snapshot_path && !imgError
+                  ? "Photo captured automatically at check-in"
+                  : "Showing registered profile photo · Live snapshots captured by recognizer"}
               </p>
               <button
-                onClick={() => setSelectedUser(null)}
-                className="mt-4 w-full rounded-xl bg-teal-600 dark:bg-teal-500 px-4 py-2 text-xs font-bold text-white dark:text-[#07100f] hover:bg-teal-700 dark:hover:bg-teal-400 transition-all active:scale-[0.98]"
+                onClick={() => setSelectedRecord(null)}
+                className="mt-3 w-full rounded-xl bg-teal-600 dark:bg-teal-500 px-4 py-2 text-xs font-bold text-white dark:text-[#07100f] hover:bg-teal-700 dark:hover:bg-teal-400 transition-all active:scale-[0.98]"
               >
                 Close Window
               </button>
@@ -504,6 +537,7 @@ export default function Home() {
           </div>
         </div>
       )}
+
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmIds && (

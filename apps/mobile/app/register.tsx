@@ -10,9 +10,11 @@ import {
   useColorScheme,
   Dimensions,
   Alert,
+  Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
 
@@ -46,29 +48,41 @@ export default function RegisterScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [capturing, setCapturing] = useState(false);
 
-  if (!permission) {
-    // Camera permissions are still loading.
-    return (
-      <View style={[styles.loadingContainer, isDark && { backgroundColor: '#020617' }]}>
-        <ActivityIndicator size="large" color={isDark ? '#2dd4bf' : '#0f766e'} />
-      </View>
-    );
-  }
+  // New upload states
+  const [imageSource, setImageSource] = useState<'camera' | 'upload'>('camera');
+  const [uploadUri, setUploadUri] = useState<string | null>(null);
 
-  if (!permission.granted) {
-    // Camera permissions are not granted yet.
-    return (
-      <View style={[styles.permissionContainer, isDark && { backgroundColor: '#020617' }]}>
-        <Text style={[styles.permissionTitle, isDark && { color: '#f1f5f9' }]}>Camera Access Required</Text>
-        <Text style={styles.permissionDesc}>
-          Ovik Mobile needs access to your camera to capture employee enrollment face pictures.
-        </Text>
-        <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionBtnText}>Grant Permission</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const handlePickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to upload an image.');
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        setUploadUri(asset.uri);
+        if (asset.base64) {
+          setPhotoBase64(asset.base64);
+          Alert.alert('Success', 'Image selected successfully!');
+        } else {
+          Alert.alert('Error', 'Could not read base64 data from the image.');
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'Failed to pick image.');
+    }
+  };
 
   const handleCapture = async () => {
     if (!cameraRef.current || capturing) return;
@@ -98,7 +112,7 @@ export default function RegisterScreen() {
       return;
     }
     if (!photoBase64) {
-      Alert.alert('Validation Error', 'Please capture the employee\'s face image before registering.');
+      Alert.alert('Validation Error', 'Please capture a photo or upload an image before registering.');
       return;
     }
 
@@ -127,7 +141,14 @@ export default function RegisterScreen() {
 
       if (response.ok) {
         Alert.alert('Success', `Employee ${name} registered successfully!`, [
-          { text: 'OK', onPress: () => router.back() }
+          {
+            text: 'OK',
+            onPress: () => {
+              setPhotoBase64(null);
+              setUploadUri(null);
+              router.back();
+            },
+          },
         ]);
       } else {
         const errText = await response.text();
@@ -146,35 +167,116 @@ export default function RegisterScreen() {
   return (
     <ScrollView style={themeStyles.container} contentContainerStyle={themeStyles.content}>
       
-      {/* Live Camera Feed */}
-      <View style={themeStyles.cameraWrapper}>
-        <CameraView style={themeStyles.camera} ref={cameraRef} facing="front">
-          {/* Visual Positioning Overlay Guide */}
-          <View style={themeStyles.overlayContainer}>
-            {/* Dashed face oval contour */}
-            <View style={themeStyles.faceOval} />
-            {/* Guide Text */}
-            <Text style={themeStyles.overlayGuideText}>Position face inside the oval</Text>
-            {/* Corner Crosshairs */}
-            <View style={[themeStyles.hairline, themeStyles.hairlineTopLeft]} />
-            <View style={[themeStyles.hairline, themeStyles.hairlineTopRight]} />
-            <View style={[themeStyles.hairline, themeStyles.hairlineBottomLeft]} />
-            <View style={[themeStyles.hairline, themeStyles.hairlineBottomRight]} />
-          </View>
-        </CameraView>
+      {/* Selector Tabs */}
+      <View style={themeStyles.tabContainer}>
         <TouchableOpacity
-          style={[themeStyles.captureBtn, capturing && { opacity: 0.7 }]}
-          onPress={handleCapture}
-          disabled={capturing}
+          style={[themeStyles.tabBtn, imageSource === 'camera' && themeStyles.tabBtnActive]}
+          onPress={() => {
+            setImageSource('camera');
+          }}
         >
-          {capturing ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={themeStyles.captureBtnText}>📸 Take Photo</Text>
-          )}
+          <Text style={[themeStyles.tabBtnText, imageSource === 'camera' && themeStyles.tabBtnTextActive]}>
+            📷 Camera
+          </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[themeStyles.tabBtn, imageSource === 'upload' && themeStyles.tabBtnActive]}
+          onPress={() => {
+            setImageSource('upload');
+          }}
+        >
+          <Text style={[themeStyles.tabBtnText, imageSource === 'upload' && themeStyles.tabBtnTextActive]}>
+            📁 Upload
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Live Camera Feed or Upload Viewport */}
+      <View style={themeStyles.cameraWrapper}>
+        {imageSource === 'camera' ? (
+          <>
+            {!permission ? (
+              <View style={[themeStyles.camera, themeStyles.placeholderViewport]}>
+                <ActivityIndicator size="small" color="#2dd4bf" />
+              </View>
+            ) : !permission.granted ? (
+              <View style={[themeStyles.camera, themeStyles.placeholderViewport]}>
+                <Text style={themeStyles.viewportErrorTitle}>Camera Access Required</Text>
+                <Text style={themeStyles.viewportErrorDesc}>
+                  Please grant camera permissions to capture live face data.
+                </Text>
+                <TouchableOpacity style={themeStyles.grantBtn} onPress={requestPermission}>
+                  <Text style={themeStyles.grantBtnText}>Grant Permission</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <CameraView style={themeStyles.camera} ref={cameraRef} facing="front">
+                  {/* Visual Positioning Overlay Guide */}
+                  <View style={themeStyles.overlayContainer}>
+                    {/* Dashed face oval contour */}
+                    <View style={themeStyles.faceOval} />
+                    {/* Guide Text */}
+                    <Text style={themeStyles.overlayGuideText}>Position face inside the oval</Text>
+                    {/* Corner Crosshairs */}
+                    <View style={[themeStyles.hairline, themeStyles.hairlineTopLeft]} />
+                    <View style={[themeStyles.hairline, themeStyles.hairlineTopRight]} />
+                    <View style={[themeStyles.hairline, themeStyles.hairlineBottomLeft]} />
+                    <View style={[themeStyles.hairline, themeStyles.hairlineBottomRight]} />
+                  </View>
+                </CameraView>
+                <TouchableOpacity
+                  style={[themeStyles.captureBtn, capturing && { opacity: 0.7 }]}
+                  onPress={handleCapture}
+                  disabled={capturing}
+                >
+                  {capturing ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={themeStyles.captureBtnText}>📸 Take Photo</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {uploadUri ? (
+              <View style={themeStyles.camera}>
+                <Image source={{ uri: uploadUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+                <View style={themeStyles.overlayContainer}>
+                  {/* Face oval guide on top of uploaded image preview */}
+                  <View style={themeStyles.faceOval} />
+                  <Text style={themeStyles.overlayGuideText}>Face alignment preview</Text>
+                  <View style={[themeStyles.hairline, themeStyles.hairlineTopLeft]} />
+                  <View style={[themeStyles.hairline, themeStyles.hairlineTopRight]} />
+                  <View style={[themeStyles.hairline, themeStyles.hairlineBottomLeft]} />
+                  <View style={[themeStyles.hairline, themeStyles.hairlineBottomRight]} />
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity style={[themeStyles.camera, themeStyles.placeholderViewport]} onPress={handlePickImage}>
+                <Text style={{ fontSize: 40, marginBottom: 8 }}>📁</Text>
+                <Text style={themeStyles.viewportErrorTitle}>No Image Selected</Text>
+                <Text style={themeStyles.viewportErrorDesc}>
+                  Tap to browse photos from your library
+                </Text>
+                <TouchableOpacity style={themeStyles.grantBtn} onPress={handlePickImage}>
+                  <Text style={themeStyles.grantBtnText}>Choose from Gallery</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            )}
+            {uploadUri && (
+              <TouchableOpacity style={themeStyles.captureBtn} onPress={handlePickImage}>
+                <Text style={themeStyles.captureBtnText}>📁 Choose Different Photo</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
         {photoBase64 && (
-          <Text style={themeStyles.capturedBadge}>✓ Face image recorded</Text>
+          <Text style={themeStyles.capturedBadge}>
+            ✓ {imageSource === 'camera' ? 'Face image captured' : 'Photo uploaded successfully'}
+          </Text>
         )}
       </View>
 
@@ -377,6 +479,31 @@ const getStyles = (isDark: boolean) =>
       padding: 16,
       paddingBottom: 40,
     },
+    tabContainer: {
+      flexDirection: 'row',
+      backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+      borderRadius: 10,
+      padding: 4,
+      marginBottom: 16,
+      width: width - 32,
+    },
+    tabBtn: {
+      flex: 1,
+      paddingVertical: 8,
+      alignItems: 'center',
+      borderRadius: 8,
+    },
+    tabBtnActive: {
+      backgroundColor: isDark ? '#2dd4bf' : '#0f766e',
+    },
+    tabBtnText: {
+      fontSize: 13,
+      fontWeight: 'bold',
+      color: isDark ? '#94a3b8' : '#64748b',
+    },
+    tabBtnTextActive: {
+      color: isDark ? '#0f172a' : '#ffffff',
+    },
     cameraWrapper: {
       alignItems: 'center',
       marginBottom: 20,
@@ -386,6 +513,42 @@ const getStyles = (isDark: boolean) =>
       height: (width - 32) * 0.75, // 4:3 Ratio
       borderRadius: 16,
       overflow: 'hidden',
+    },
+    placeholderViewport: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#0f172a' : '#f1f5f9',
+      borderWidth: 2,
+      borderStyle: 'dashed',
+      borderColor: isDark ? '#334155' : '#cbd5e1',
+      padding: 16,
+    },
+    viewportErrorTitle: {
+      fontSize: 14,
+      fontWeight: 'bold',
+      color: isDark ? '#f1f5f9' : '#0f172a',
+      marginBottom: 4,
+      textAlign: 'center',
+    },
+    viewportErrorDesc: {
+      fontSize: 11,
+      color: isDark ? '#94a3b8' : '#64748b',
+      textAlign: 'center',
+      marginBottom: 12,
+      paddingHorizontal: 12,
+    },
+    grantBtn: {
+      height: 36,
+      backgroundColor: isDark ? '#2dd4bf' : '#0f766e',
+      borderRadius: 8,
+      paddingHorizontal: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    grantBtnText: {
+      color: isDark ? '#0f172a' : '#ffffff',
+      fontSize: 12,
+      fontWeight: 'bold',
     },
     overlayContainer: {
       flex: 1,
